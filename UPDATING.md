@@ -17,6 +17,11 @@ so you might need to update your config.
 The scheduler.min_file_parsing_loop_time config option has been temporarily removed due to
 some bugs.
 
+### New `log_processor_manager_location` config option
+
+The DAG parsing manager log now by default will be log into a file, where its location is
+controlled by the new `log_processor_manager_location` config option in core section.
+
 ## Airflow 1.10
 
 Installation and upgrading requires setting `SLUGIFY_USES_TEXT_UNIDECODE=yes` in your environment or

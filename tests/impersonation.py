@@ -92,10 +92,22 @@ class ImpersonationTest(unittest.TestCase):
         """
         Tests that impersonating a unix user works
         """
-        self.run_backfill(
-            'test_impersonation',
-            'test_impersonated_user'
-        )
+        try:
+            self.run_backfill(
+                'test_impersonation',
+                'test_impersonated_user'
+            )
+        except Exception as e:
+            from airflow import configuration as conf
+            BASE_LOG_FOLDER = conf.get('core', 'BASE_LOG_FOLDER')
+            dir = os.path.expanduser(BASE_LOG_FOLDER)
+            dir = os.path.join(dir, 'test_impersonation')
+            dir = os.path.join(dir, 'test_impersonated_user')
+            for root, dirs, files in os.walk(dir):
+                for fi in files:
+                    with open(os.path.join(root, fi), 'r') as f:
+                        print(f.read())
+            raise e
 
     def test_no_impersonation(self):
         """
