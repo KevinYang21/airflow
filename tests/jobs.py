@@ -2041,6 +2041,54 @@ class SchedulerJobTest(unittest.TestCase):
         ti2.refresh_from_db(session=session)
         self.assertEqual(ti2.state, State.SCHEDULED)
 
+    def test_change_state_for_tasks_failed_to_execute(self):
+        dag = DAG(
+            dag_id='dag_id',
+            start_date=DEFAULT_DATE)
+
+        task = DummyOperator(
+            task_id='task_id',
+            dag=dag,
+            owner='airflow')
+
+        # If there's no left over task in executor.queued_tasks, nothing happens
+        session = settings.Session()
+        scheduler_job = SchedulerJob()
+        mock_logger = mock.MagicMock()
+        test_executor = TestExecutor()
+        scheduler_job.executor = test_executor
+        scheduler_job._logger = mock_logger
+        scheduler_job._change_state_for_tasks_failed_to_execute()
+        mock_logger.info.assert_not_called()
+
+        # Tasks failed to execute with QUEUED state will be set to SCHEDULED state.
+        session.query(TI).delete()
+        session.commit()
+        key = 'dag_id', 'task_id', DEFAULT_DATE
+        test_executor.queued_tasks[key] = 'value'
+        ti = TI(task, DEFAULT_DATE)
+        ti.state = State.QUEUED
+        session.merge(ti)
+        session.commit()
+
+        scheduler_job._change_state_for_tasks_failed_to_execute()
+
+        ti.refresh_from_db()
+        self.assertEquals(State.SCHEDULED, ti.state)
+
+        # Tasks failed to execute with RUNNING state will not be set to SCHEDULED state.
+        session.query(TI).delete()
+        session.commit()
+        ti.state = State.RUNNING
+
+        session.merge(ti)
+        session.commit()
+
+        scheduler_job._change_state_for_tasks_failed_to_execute()
+
+        ti.refresh_from_db()
+        self.assertEquals(State.RUNNING, ti.state)
+
     def test_execute_helper_reset_orphaned_tasks(self):
         session = settings.Session()
         dag = DAG(
@@ -2954,7 +3002,8 @@ class SchedulerJobTest(unittest.TestCase):
                 pass
 
         ti_tuple = six.next(six.itervalues(executor.queued_tasks))
-        (command, priority, queue, ti) = ti_tuple
+        (command, priority, queue, simple_ti) = ti_tuple
+        ti = simple_ti.construct_task_instance()
         ti.task = dag_task1
 
         self.assertEqual(ti.try_number, 1)
@@ -2974,11 +3023,20 @@ class SchedulerJobTest(unittest.TestCase):
         ti.refresh_from_db()
         self.assertEqual(ti.state, State.SCHEDULED)
 
-        # now the executor has cleared and it should be allowed the re-queue
+        # now the executor has cleared and it should be allowed the re-queue,
+        # but tasks stay in the executor.queued_tasks after executor.heartbeat()
+        # will be set back to SCHEDULED state
         executor.queued_tasks.clear()
         do_schedule()
         ti.refresh_from_db()
-        self.assertEqual(ti.state, State.QUEUED)
+        self.assertEqual(ti.state, State.SCHEDULED)
+
+        # To verify that task does get re-queued.
+        executor.queued_tasks.clear()
+        executor.do_update = True
+        do_schedule()
+        ti.refresh_from_db()
+        self.assertEqual(ti.state, State.RUNNING)
 
     @unittest.skipUnless("INTEGRATION" in os.environ, "Can only run end to end")
     def test_retry_handling_job(self):
